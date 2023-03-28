@@ -4,9 +4,11 @@ import pandas as pd
 import numpy as np
 import talib
 import datetime
+import sys
+import traceback
 
-api_key = 'YOUR API KEY'
-api_secret = 'YOUR SECRET API KEY'
+api_key = 'YOUR  API KEY HERE'
+api_secret = 'YOU SECRET API KEY HERE'
 
 exchange = ccxt.binanceus({
     'apiKey': api_key,
@@ -39,11 +41,31 @@ def macd_analysis(df):
     macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
     return macd, macdsignal, macdhist
 
+def ichimoku_cloud_analysis(df):
+    conversion_line_period = 9
+    base_line_period = 26
+    lagging_span_period = 52
+    displacement = 26
+
+    conversion_line_high = df['high'].rolling(window=conversion_line_period).max()
+    conversion_line_low = df['low'].rolling(window=conversion_line_period).min()
+    conversion_line = (conversion_line_high + conversion_line_low) / 2
+
+    base_line_high = df['high'].rolling(window=base_line_period).max()
+    base_line_low = df['low'].rolling(window=base_line_period).min()
+    base_line = (base_line_high + base_line_low) / 2
+
+    leading_span_A = ((conversion_line + base_line) / 2).shift(displacement)
+    leading_span_B = ((df['high'].rolling(window=lagging_span_period).max() + df['low'].rolling(window=lagging_span_period).min()) / 2).shift(displacement)
+    
+    return conversion_line, base_line, leading_span_A, leading_span_B
+
 def generate_signal(df):
     sma50, sma200 = sma_analysis(df)
     rsi = rsi_analysis(df)
     bb_upper, bb_middle, bb_lower = bb_analysis(df)
     macd, macdsignal, macdhist = macd_analysis(df)
+    conversion_line, base_line, leading_span_A, leading_span_B = ichimoku_cloud_analysis(df)
 
     # Calculate the score for each indicator
     sma50_score = np.where(df['close'] > sma50, 1, -1).sum()
@@ -51,9 +73,11 @@ def generate_signal(df):
     rsi_score = np.where(rsi > 50, 1, -1).sum()
     bb_score = np.where(df['close'] > bb_middle, 1, -1).sum()
     macd_score = np.where(macdhist > 0, 1, -1).sum()
+    ichimoku_score = np.where((conversion_line > base_line) & (df['close'] > leading_span_A) & (df['close'] > leading_span_B), 1, -1).sum()
+
 
     # Combine the scores for each indicator
-    score = sma50_score + sma200_score + rsi_score + bb_score + macd_score
+    score = sma50_score + sma200_score + rsi_score + bb_score + macd_score + ichimoku_score
 
     # Generate long or short suggestion based on the combined score
     if score > 0:
@@ -80,40 +104,66 @@ def generate_signal(df):
         target_price = None
         stop_loss = None
 
-    confidence = calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist)
+    confidence = calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist, conversion_line, base_line, leading_span_A, leading_span_B)
 
-    return long, short, entry_price, target_price, stop_loss, confidence
-def calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist):
-    sma50_confidence = (df['close'].iloc[-1] / sma50.iloc[-1] - 1) * 100
-    sma200_confidence = (df['close'].iloc[-1] / sma200.iloc[-1] - 1) * 100
-    rsi_confidence = (rsi.iloc[-1] / 50 - 1) * 100
-    bb_confidence = (df['close'].iloc[-1] / bb_middle.iloc[-1] - 1) * 100
-    macd_confidence = (macdhist.iloc[-1] / np.abs(macdhist).mean() - 1) * 100
+    if confidence > 50:
+        # ANSI escape code for bright green text
+        ansi_escape = '\033[1;32m'
+        reset_escape = '\033[0m'
+        confidence_str = f"{ansi_escape}{confidence:.2f}%{reset_escape}"
+    else:
+        confidence_str = f"{confidence:.2f}%"
 
-    confidence = (sma50_confidence + sma200_confidence + rsi_confidence + bb_confidence + macd_confidence) / 5
-    return np.clip(confidence, 0, 100)
+    return long, short, entry_price, target_price, stop_loss, confidence_str
 
-while True:
-    current_time = datetime.datetime.now()
-    print(f'[{current_time}] Checking trade positions:')
-    for timeframe in timeframes:
-        df = fetch_ohlcv_data(symbol, timeframe)
-        long, short, entry_price, target_price, stop_loss, confidence = generate_signal(df)
+def calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist, conversion_line, base_line, leading_span_A, leading_span_B):
+    # Calculate the score for each indicator
+    sma50_score = np.where(df['close'] > sma50, 1, -1).sum()
+    sma200_score = np.where(df['close'] > sma200, 1, -1).sum()
+    rsi_score = np.where(rsi > 50, 1, -1).sum()
+    bb_score = np.where(df['close'] > bb_middle, 1, -1).sum()
+    macd_score = np.where(macdhist > 0, 1, -1).sum()
+    ichimoku_score = np.where((conversion_line > base_line) & (df['close'] > leading_span_A) & (df['close'] > leading_span_B), 1, -1).sum()
 
-        if long:
-            print(f'{timeframe} LONG position: Entry Price {entry_price}, Target Price {target_price}, Stop Loss {stop_loss}, Confidence {confidence:.2f}%')
-        elif short:
-            print(f'{timeframe} SHORT position: Entry Price {entry_price}, Target Price {target_price}, Stop Loss {stop_loss}, Confidence {confidence:.2f}%')
-        else:
-            print(f'{timeframe}: No clear signal. Confidence {confidence:.2f}%')
+    # Combine the scores for each indicator
+    score = sma50_score + sma200_score + rsi_score + bb_score + macd_score + ichimoku_score
 
+    # Calculate confidence as a percentage of the maximum possible score
+    max_score = len(df) * 6
+    confidence = (score / max_score) * 100
 
-    # Calculate the remaining time until the next iteration
-    remaining_seconds = 60 - datetime.datetime.now().second
-    print(f'Next check in {remaining_seconds} seconds.\n')
+    return confidence
 
-    # Countdown timer
-    for i in range(remaining_seconds, 0, -1):
-        print(f'{i} seconds remaining.', end='\r')
-        time.sleep(1)
-    print('\n')  # Add a blank line between iterations
+def main():
+    while True:
+        try:
+            current_time = datetime.datetime.now()
+            print(f'[{current_time}] Checking trade positions:')
+            for timeframe in timeframes:
+                df = fetch_ohlcv_data(symbol, timeframe)
+                long, short, entry_price, target_price, stop_loss, confidence = generate_signal(df)
+
+                if long:
+                    print(f'{timeframe} LONG position: Entry Price {entry_price}, Target Price {target_price}, Stop Loss {stop_loss}, Confidence {confidence}')
+                elif short:
+                    print(f'{timeframe} SHORT position: Entry Price {entry_price}, Target Price {target_price}, Stop Loss {stop_loss}, Confidence {confidence}')
+                else:
+                    print(f'{timeframe}: No clear signal. Confidence {confidence}')
+
+            # Calculate the remaining time until the next iteration
+            remaining_seconds = 60 - datetime.datetime.now().second
+            print(f'Next check in {remaining_seconds} seconds.\n')
+
+            # Countdown timer
+            for i in range(remaining_seconds, 0, -1):
+                print(f'{i} seconds remaining.', end='\r')
+                time.sleep(1)
+            print('\n')  # Add a blank line between iterations
+
+        except Exception as e:
+            print(f'An error occurred: {e}', file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            break
+
+if __name__ == '__main__':
+    main()
