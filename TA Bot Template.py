@@ -7,8 +7,8 @@ import datetime
 import sys
 import traceback
 
-api_key = 'YOUR API KEY'
-api_secret = 'YOUR SECRET API KEY'
+api_key = 'YOUR API KEY HERE'
+api_secret = 'YOUR SECRET API KEY HERE'
 
 exchange = ccxt.binanceus({
     'apiKey': api_key,
@@ -160,9 +160,9 @@ def main():
                 long, short, entry_price, target_price, stop_loss, confidence = generate_signal(df)
 
                 if long:
-                    print(f'{timeframe} LONG position: Entry Price {entry_price}, Target Price {target_price}, Stop Loss {stop_loss}, Confidence {confidence}')
+                    print(f'{timeframe} LONG position: Entry Price {entry_price:.4f}, Target Price {target_price:.4f}, Stop Loss {stop_loss:.4f}, Confidence {confidence}')
                 elif short:
-                    print(f'{timeframe} SHORT position: Entry Price {entry_price}, Target Price {target_price}, Stop Loss {stop_loss}, Confidence {confidence}')
+                    print(f'{timeframe} SHORT position: Entry Price {entry_price:.4f}, Target Price {target_price:.4f}, Stop Loss {stop_loss:.4f}, Confidence {confidence}')
                 else:
                     print(f'{timeframe}: No clear signal. Confidence {confidence}')
 
