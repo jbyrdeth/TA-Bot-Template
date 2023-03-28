@@ -7,8 +7,8 @@ import datetime
 import sys
 import traceback
 
-api_key = 'YOUR  API KEY HERE'
-api_secret = 'YOU SECRET API KEY HERE'
+api_key = 'YOUR API KEY HERE'
+api_secret = 'YOUR SECRET API KEY HERE'
 
 exchange = ccxt.binanceus({
     'apiKey': api_key,
@@ -117,22 +117,22 @@ def generate_signal(df):
     return long, short, entry_price, target_price, stop_loss, confidence_str
 
 def calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist, conversion_line, base_line, leading_span_A, leading_span_B):
-    # Calculate the score for each indicator
-    sma50_score = np.where(df['close'] > sma50, 1, -1).sum()
-    sma200_score = np.where(df['close'] > sma200, 1, -1).sum()
-    rsi_score = np.where(rsi > 50, 1, -1).sum()
-    bb_score = np.where(df['close'] > bb_middle, 1, -1).sum()
-    macd_score = np.where(macdhist > 0, 1, -1).sum()
-    ichimoku_score = np.where((conversion_line > base_line) & (df['close'] > leading_span_A) & (df['close'] > leading_span_B), 1, -1).sum()
+    sma50_confidence = (df['close'].iloc[-1] / sma50.iloc[-1] - 1) * 100
+    sma200_confidence = (df['close'].iloc[-1] / sma200.iloc[-1] - 1) * 100
+    rsi_confidence = (rsi.iloc[-1] / 50 - 1) * 100
+    bb_confidence = (df['close'].iloc[-1] / bb_middle.iloc[-1] - 1) * 100
+    macd_confidence = (macdhist.iloc[-1] / np.abs(macdhist).mean() - 1) * 100
 
-    # Combine the scores for each indicator
-    score = sma50_score + sma200_score + rsi_score + bb_score + macd_score + ichimoku_score
+    raw_confidence = (sma50_confidence + sma200_confidence + rsi_confidence + bb_confidence + macd_confidence) / 5
 
-    # Calculate confidence as a percentage of the maximum possible score
-    max_score = len(df) * 6
-    confidence = (score / max_score) * 100
+    if raw_confidence < 0:
+        # For a short position, we will take the absolute value of raw_confidence and normalize it.
+        confidence = np.abs(raw_confidence) / 50 * 100
+    else:
+        # For a long position, we will normalize raw_confidence.
+        confidence = raw_confidence / 50 * 100
 
-    return confidence
+    return np.clip(confidence, 0, 100)
 
 def main():
     while True:
