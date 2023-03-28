@@ -7,8 +7,8 @@ import datetime
 import sys
 import traceback
 
-api_key = 'YOUR API KEY HERE'
-api_secret = 'YOUR SECRET API KEY HERE'
+api_key = 'YOUR API KEY'
+api_secret = 'YOUR SECRET API KEY'
 
 exchange = ccxt.binanceus({
     'apiKey': api_key,
@@ -60,6 +60,21 @@ def ichimoku_cloud_analysis(df):
     
     return conversion_line, base_line, leading_span_A, leading_span_B
 
+def pivot_points(df):
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    pivot = (high + low + close) / 3
+    resistance1 = 2 * pivot - low
+    support1 = 2 * pivot - high
+    resistance2 = pivot + (high - low)
+    support2 = pivot - (high - low)
+    resistance3 = high + 2 * (pivot - low)
+    support3 = low - 2 * (high - pivot)
+
+    return pivot, resistance1, support1, resistance2, support2, resistance3, support3
+
 def generate_signal(df):
     sma50, sma200 = sma_analysis(df)
     rsi = rsi_analysis(df)
@@ -90,15 +105,16 @@ def generate_signal(df):
         long = False
         short = False
 
-    # Generate target price and stop loss for the position
+    pivot, resistance1, support1, resistance2, support2, resistance3, support3 = pivot_points(df)
+
     if long:
         entry_price = df['close'].iloc[-1]
-        target_price = entry_price * 1.02
-        stop_loss = entry_price * 0.98
+        target_price = resistance1.iloc[-1]
+        stop_loss = support1.iloc[-1]
     elif short:
         entry_price = df['close'].iloc[-1]
-        target_price = entry_price * 0.98
-        stop_loss = entry_price * 1.02
+        target_price = support1.iloc[-1]
+        stop_loss = resistance1.iloc[-1]
     else:
         entry_price = None
         target_price = None
