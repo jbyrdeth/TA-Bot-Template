@@ -1,185 +1,148 @@
-import time
 import ccxt
-import pandas as pd
 import numpy as np
+import pandas as pd
 import talib
-import datetime
-import sys
-import traceback
+import time
 
 api_key = 'YOUR API KEY HERE'
-api_secret = 'YOUR SECRET API KEY HERE'
+secret_key = 'YOUR SECRET API KEY HERE'
 
-exchange = ccxt.binanceus({
-    'apiKey': api_key,
-    'secret': api_secret,
+binance = ccxt.binanceus({
+    "apiKey": api_key,
+    "secret": secret_key,
+    "enableRateLimit": True
 })
 
-symbol = 'MATIC/USD'
-timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '6h', '1d']
+symbols = ["ETH/USD", "BTC/USD"]
 
-def fetch_ohlcv_data(symbol, timeframe):
-    data = exchange.fetch_ohlcv(symbol, timeframe)
-    df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+def fetch_data(symbol, timeframe):
+    data = binance.fetch_ohlcv(symbol, timeframe)
+    df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     return df
 
-def sma_analysis(df):
-    sma50 = talib.SMA(df['close'], timeperiod=50)
-    sma200 = talib.SMA(df['close'], timeperiod=200)
-    return sma50, sma200
-
-def rsi_analysis(df):
-    rsi = talib.RSI(df['close'], timeperiod=14)
-    return rsi
-
-def bb_analysis(df):
-    bb_upper, bb_middle, bb_lower = talib.BBANDS(df['close'], timeperiod=20, nbdevup=2, nbdevdn=2)
-    return bb_upper, bb_middle, bb_lower
-
-def macd_analysis(df):
-    macd, macdsignal, macdhist = talib.MACD(df['close'], fastperiod=12, slowperiod=26, signalperiod=9)
-    return macd, macdsignal, macdhist
-
-def ichimoku_cloud_analysis(df):
-    conversion_line_period = 9
-    base_line_period = 26
-    lagging_span_period = 52
-    displacement = 26
-
-    conversion_line_high = df['high'].rolling(window=conversion_line_period).max()
-    conversion_line_low = df['low'].rolling(window=conversion_line_period).min()
-    conversion_line = (conversion_line_high + conversion_line_low) / 2
-
-    base_line_high = df['high'].rolling(window=base_line_period).max()
-    base_line_low = df['low'].rolling(window=base_line_period).min()
-    base_line = (base_line_high + base_line_low) / 2
-
-    leading_span_A = ((conversion_line + base_line) / 2).shift(displacement)
-    leading_span_B = ((df['high'].rolling(window=lagging_span_period).max() + df['low'].rolling(window=lagging_span_period).min()) / 2).shift(displacement)
+def add_indicators(df):
+    df["20_EMA"] = talib.EMA(df["close"], timeperiod=20)
+    df["50_EMA"] = talib.EMA(df["close"], timeperiod=50)
+    df["RSI"] = talib.RSI(df["close"], timeperiod=14)
+    df["BB_upper"], df["BB_middle"], df["BB_lower"] = talib.BBANDS(df["close"], timeperiod=20)
     
-    return conversion_line, base_line, leading_span_A, leading_span_B
+    # Calculate the Ichimoku Cloud manually
+    high_9_period = df["high"].rolling(window=9).max()
+    low_9_period = df["low"].rolling(window=9).min()
+    df["tenkan_sen"] = (high_9_period + low_9_period) / 2
+    
+    high_26_period = df["high"].rolling(window=26).max()
+    low_26_period = df["low"].rolling(window=26).min()
+    df["kijun_sen"] = (high_26_period + low_26_period) / 2
+    
+    df["senkou_span_a"] = ((df["tenkan_sen"] + df["kijun_sen"]) / 2).shift(26)
 
-def pivot_points(df):
-    high = df['high']
-    low = df['low']
-    close = df['close']
+    high_52_period = df["high"].rolling(window=52).max()
+    low_52_period = df["low"].rolling(window=52).min()
+    df["senkou_span_b"] = ((high_52_period + low_52_period) / 2).shift(26)
+    
+    df["Ichimoku_cloud_top"] = df[["senkou_span_a", "senkou_span_b"]].max(axis=1)
+    df["Ichimoku_cloud_bottom"] = df[["senkou_span_a", "senkou_span_b"]].min(axis=1)
+    
+    return df
 
-    pivot = (high + low + close) / 3
-    resistance1 = 2 * pivot - low
-    support1 = 2 * pivot - high
-    resistance2 = pivot + (high - low)
-    support2 = pivot - (high - low)
-    resistance3 = high + 2 * (pivot - low)
-    support3 = low - 2 * (high - pivot)
+def check_entry_conditions_long(df_15m, df_1h, df_4h):
+    if (
+        df_15m["20_EMA"].iloc[-1] > df_15m["50_EMA"].iloc[-1]
+        and df_1h["20_EMA"].iloc[-1] > df_1h["50_EMA"].iloc[-1]
+        and df_15m["RSI"].iloc[-1] > 50
+        and df_1h["RSI"].iloc[-1] > 50
+        and df_15m["close"].iloc[-1] > df_15m["BB_middle"].iloc[-1]
+        and df_4h["close"].iloc[-1] > df_4h["Ichimoku_cloud_top"].iloc[-1]
+    ):
+        return True
+    return False
 
-    return pivot, resistance1, support1, resistance2, support2, resistance3, support3
+def check_entry_conditions_short(df_15m, df_1h, df_4h):
+    if (
+        df_15m["20_EMA"].iloc[-1] < df_15m["50_EMA"].iloc[-1]
+        and df_1h["20_EMA"].iloc[-1] < df_1h["50_EMA"].iloc[-1]
+        and df_15m["RSI"].iloc[-1] < 50
+        and df_1h["RSI"].iloc[-1] < 50
+        and df_15m["close"].iloc[-1] < df_15m["BB_middle"].iloc[-1]
+        and df_4h["close"].iloc[-1] < df_4h["Ichimoku_cloud_bottom"].iloc[-1]
+    ):
+        return True
+    return False
 
-def generate_signal(df):
-    sma50, sma200 = sma_analysis(df)
-    rsi = rsi_analysis(df)
-    bb_upper, bb_middle, bb_lower = bb_analysis(df)
-    macd, macdsignal, macdhist = macd_analysis(df)
-    conversion_line, base_line, leading_span_A, leading_span_B = ichimoku_cloud_analysis(df)
+def fibonacci_extensions(df):
+    last_high = df['high'].iloc[-1]
+    last_low = df['low'].iloc[-1]
+    fib_levels = [1.272, 1.618, 2.0]
+    fib_extensions = [(last_high - last_low) * level + last_low for level in fib_levels]
+    return fib_extensions
 
-    # Calculate the score for each indicator
-    sma50_score = np.where(df['close'] > sma50, 1, -1).sum()
-    sma200_score = np.where(df['close'] > sma200, 1, -1).sum()
-    rsi_score = np.where(rsi > 50, 1, -1).sum()
-    bb_score = np.where(df['close'] > bb_middle, 1, -1).sum()
-    macd_score = np.where(macdhist > 0, 1, -1).sum()
-    ichimoku_score = np.where((conversion_line > base_line) & (df['close'] > leading_span_A) & (df['close'] > leading_span_B), 1, -1).sum()
+def fibonacci_retracements(df):
+    last_high = df['high'].iloc[-1]
+    last_low = df['low'].iloc[-1]
+    fib_levels = [0.382, 0.618, 0.786]
+    fib_retracements = [last_high - (last_high - last_low) * level for level in fib_levels]
+    return fib_retracements
 
-
-    # Combine the scores for each indicator
-    score = sma50_score + sma200_score + rsi_score + bb_score + macd_score + ichimoku_score
-
-    # Generate long or short suggestion based on the combined score
-    if score > 0:
-        long = True
-        short = False
-    elif score < 0:
-        long = False
-        short = True
-    else:
-        long = False
-        short = False
-
-    pivot, resistance1, support1, resistance2, support2, resistance3, support3 = pivot_points(df)
-
-    if long:
-        entry_price = df['close'].iloc[-1]
-        target_price = resistance1.iloc[-1]
-        stop_loss = support1.iloc[-1]
-    elif short:
-        entry_price = df['close'].iloc[-1]
-        target_price = support1.iloc[-1]
-        stop_loss = resistance1.iloc[-1]
-    else:
-        entry_price = None
-        target_price = None
-        stop_loss = None
-
-    confidence = calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist, conversion_line, base_line, leading_span_A, leading_span_B)
-
-    if confidence > 50:
-        # ANSI escape code for bright green text
-        ansi_escape = '\033[1;32m'
-        reset_escape = '\033[0m'
-        confidence_str = f"{ansi_escape}{confidence:.2f}%{reset_escape}"
-    else:
-        confidence_str = f"{confidence:.2f}%"
-
-    return long, short, entry_price, target_price, stop_loss, confidence_str
-
-def calculate_confidence(df, sma50, sma200, rsi, bb_upper, bb_middle, bb_lower, macdhist, conversion_line, base_line, leading_span_A, leading_span_B):
-    sma50_confidence = (df['close'].iloc[-1] / sma50.iloc[-1] - 1) * 100
-    sma200_confidence = (df['close'].iloc[-1] / sma200.iloc[-1] - 1) * 100
-    rsi_confidence = (rsi.iloc[-1] / 50 - 1) * 100
-    bb_confidence = (df['close'].iloc[-1] / bb_middle.iloc[-1] - 1) * 100
-    macd_confidence = (macdhist.iloc[-1] / np.abs(macdhist).mean() - 1) * 100
-
-    raw_confidence = (sma50_confidence + sma200_confidence + rsi_confidence + bb_confidence + macd_confidence) / 5
-
-    if raw_confidence < 0:
-        # For a short position, we will take the absolute value of raw_confidence and normalize it.
-        confidence = np.abs(raw_confidence) / 50 * 100
-    else:
-        # For a long position, we will normalize raw_confidence.
-        confidence = raw_confidence / 50 * 100
-
-    return np.clip(confidence, 0, 100)
+def get_current_price(symbol):
+    ticker = binance.fetch_ticker(symbol)
+    current_price = ticker['last']
+    return current_price
 
 def main():
     while True:
         try:
-            current_time = datetime.datetime.now()
-            print(f'[{current_time}] Checking trade positions:')
-            for timeframe in timeframes:
-                df = fetch_ohlcv_data(symbol, timeframe)
-                long, short, entry_price, target_price, stop_loss, confidence = generate_signal(df)
+            for symbol in symbols:
+                df_15m = fetch_data(symbol, "15m")
+                df_1h = fetch_data(symbol, "1h")
+                df_4h = fetch_data(symbol, "4h")
 
-                if long:
-                    print(f'{timeframe} LONG position: Entry Price {entry_price:.4f}, Target Price {target_price:.4f}, Stop Loss {stop_loss:.4f}, Confidence {confidence}')
-                elif short:
-                    print(f'{timeframe} SHORT position: Entry Price {entry_price:.4f}, Target Price {target_price:.4f}, Stop Loss {stop_loss:.4f}, Confidence {confidence}')
-                else:
-                    print(f'{timeframe}: No clear signal. Confidence {confidence}')
+                df_15m = add_indicators(df_15m)
+                df_1h = add_indicators(df_1h)
+                df_4h = add_indicators(df_4h)
 
-            # Calculate the remaining time until the next iteration
-            remaining_seconds = 60 - datetime.datetime.now().second
-            print(f'Next check in {remaining_seconds} seconds.\n')
+                current_price = get_current_price(symbol)
+                print(f"Current price of {symbol}: {current_price}")
 
-            # Countdown timer
-            for i in range(remaining_seconds, 0, -1):
-                print(f'{i} seconds remaining.', end='\r')
+                # Check for long entry conditions
+                if check_entry_conditions_long(df_15m, df_1h, df_4h):
+                    entry_price = df_15m["close"].iloc[-1]
+                    stop_loss = df_15m["BB_lower"].iloc[-1]
+
+                    fib_extensions = fibonacci_extensions(df_4h)
+                    take_profit_1, take_profit_2, take_profit_3 = fib_extensions
+
+                    asset_name = symbol.split("/")[0]  # Get the asset name from the symbol
+                    print(f"Long {asset_name} with an entry price of {entry_price:.2f}, "
+                          f"a stop loss of {stop_loss:.2f}, and take profits at "
+                          f"{take_profit_1:.2f}, {take_profit_2:.2f}, {take_profit_3:.2f}")
+
+                # Check for short entry conditions
+                if check_entry_conditions_short(df_15m, df_1h, df_4h):
+                    entry_price = df_15m["close"].iloc[-1]
+                    stop_loss = df_15m["BB_upper"].iloc[-1]
+
+                    fib_retracements = fibonacci_retracements(df_4h)
+                    take_profit_1, take_profit_2, take_profit_3 = fib_retracements
+
+                    print(f"Short {asset_name} with an entry price of {entry_price:.2f}, "
+                          f"a stop loss of {stop_loss:.2f}, and take profits at "
+                          f"{take_profit_1:.2f}, {take_profit_2:.2f}, {take_profit_3:.2f}")
+
+            countdown_duration = 15 * 60  # 15 minutes (900 seconds)
+            for remaining_seconds in range(countdown_duration, 0, -1):
+                remaining_time_str = f"Next trade check in {remaining_seconds // 60}m {remaining_seconds % 60}s"
+                remaining_time_str = remaining_time_str.ljust(30)  # Adjust the number 30 according to the maximum expected length of the string
+                print(remaining_time_str, end="\r")
                 time.sleep(1)
-            print('\n')  # Add a blank line between iterations
 
+            print("Checking for trades now...\n")
         except Exception as e:
-            print(f'An error occurred: {e}', file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
+            print(f"Error: {e}")
             break
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+    print("Press Enter to exit.")
+    input()
