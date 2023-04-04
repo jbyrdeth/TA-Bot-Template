@@ -5,8 +5,8 @@ import talib
 import time
 import indicators
 
-api_key = 'wwNDqIY86Hdxf7CuXqxud3xuEGKMfaCaAesf0LvBOxg2I6uPGDjVH1bGJQjQXXNL'
-secret_key = 'oCGVW02pf69cfdr8138YO9TbCebdso7aOKpqc4Rmasqdu2zWPkAOs8YJLWMhelse'
+api_key = 'YOUR API KEY HERE'
+secret_key = 'YOUR SECRET API KEY HERE'
 
 binance = ccxt.binanceus({
     "apiKey": api_key,
